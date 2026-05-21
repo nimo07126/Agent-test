@@ -9,6 +9,7 @@ from agentops_assessment.integrations.erp import ERPClient
 from agentops_assessment.integrations.exceptions import TransientIntegrationError
 from agentops_assessment.integrations.oa import OAClient
 from agentops_assessment.integrations.third_party import SupplierRiskClient
+from agentops_assessment.rag.security import redact_sensitive
 from agentops_assessment.rag.search import KnowledgeIndex
 
 ToolCallable = Callable[[dict[str, Any]], dict[str, Any]]
@@ -67,9 +68,7 @@ class ToolRegistry:
             self.last_call_attempts[name] = attempts
             try:
                 result = self._tools[name](args)
-                # TODO(candidate/P1): 规范化工具输出，并对敏感字段做脱敏；
-                # vendor_secret、unit_cost_usd 等不得进入 result/events/audit。
-                return result
+                return redact_sensitive(result)
             except TransientIntegrationError as exc:
                 last_error = exc
                 continue

@@ -17,7 +17,9 @@ from agentops_assessment.backend.schemas import (
     TaskOut,
 )
 from agentops_assessment.backend.worker import execute_run
+from agentops_assessment.rag.security import detect_prompt_injection
 from agentops_assessment.rag.search import KnowledgeIndex
+from agentops_assessment.agent.planner import _analysis_only, _approval_requested
 
 
 def _task_from_row(row) -> TaskOut:
@@ -28,6 +30,14 @@ def _run_from_row(row) -> RunOut:
     data = dict(row)
     data["result"] = database.decode_json(data.pop("result_json"), None)
     return RunOut(**data)
+
+
+def _can_read_run(row, user: dict) -> bool:
+    return (
+        row["requested_by"] == user["id"]
+        or row["created_by"] == user["id"]
+        or "admin:read" in user["permissions"]
+    )
 
 
 def create_app() -> FastAPI:
@@ -52,7 +62,22 @@ def create_app() -> FastAPI:
         body: TaskCreate,
         user: dict = Depends(require_permissions("tasks:create")),
     ) -> TaskOut:
-        # TODO(candidate/P1): 增加提示词注入检查，并记录拒绝类审计日志。
+        injection_matches = detect_prompt_injection(f"{body.title}\n{body.prompt}")
+        if injection_matches:
+            with database.connect() as conn:
+                database.init_db(conn)
+                database.insert_audit_log(
+                    conn,
+                    actor_id=user["id"],
+                    action="task.rejected",
+                    resource="task",
+                    payload={"reason": "prompt_injection_detected", "patterns": injection_matches},
+                    decision="deny",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "prompt_injection_detected"},
+            )
         task_id = str(uuid.uuid4())
         now = database.now_iso()
         with database.connect() as conn:
@@ -92,6 +117,33 @@ def create_app() -> FastAPI:
             task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if not task:
                 raise HTTPException(status_code=404, detail="任务不存在。")
+            if task["created_by"] != user["id"] and "admin:read" not in user["permissions"]:
+                database.insert_audit_log(
+                    conn,
+                    actor_id=user["id"],
+                    action="run.create.deny",
+                    resource=task_id,
+                    payload={"reason": "task_not_visible"},
+                    decision="deny",
+                )
+                raise HTTPException(status_code=403, detail="无权运行该任务。")
+            if (
+                _approval_requested(task["prompt"])
+                and not _analysis_only(task["prompt"])
+                and "oa:approval:write" not in user["permissions"]
+            ):
+                database.insert_audit_log(
+                    conn,
+                    actor_id=user["id"],
+                    action="run.create.deny",
+                    resource=task_id,
+                    payload={"missing_permissions": ["oa:approval:write"]},
+                    decision="deny",
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={"missing_permissions": ["oa:approval:write"]},
+                )
             conn.execute(
                 """
                 INSERT INTO runs (id, task_id, requested_by, status, created_at)
@@ -120,7 +172,25 @@ def create_app() -> FastAPI:
             row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="运行记录不存在。")
-            # TODO(candidate/P1): 校验所有者或管理员可见性。
+            joined = conn.execute(
+                """
+                SELECT runs.*, tasks.created_by
+                FROM runs
+                JOIN tasks ON tasks.id = runs.task_id
+                WHERE runs.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if not _can_read_run(joined, user):
+                database.insert_audit_log(
+                    conn,
+                    actor_id=user["id"],
+                    action="run.read.deny",
+                    resource=run_id,
+                    payload={"reason": "run_not_visible"},
+                    decision="deny",
+                )
+                raise HTTPException(status_code=403, detail="无权查看该运行记录。")
             database.insert_audit_log(
                 conn,
                 actor_id=user["id"],
@@ -134,8 +204,27 @@ def create_app() -> FastAPI:
     def get_run_events(run_id: str, user: dict = Depends(get_current_user)) -> dict[str, Any]:
         with database.connect() as conn:
             database.init_db(conn)
-            # TODO(candidate/P1): 先校验 run 是否存在；不存在应返回 404。
-            # 事件可见性必须与 get_run 一致：仅请求人、任务创建人或管理员可读。
+            run = conn.execute(
+                """
+                SELECT runs.*, tasks.created_by
+                FROM runs
+                JOIN tasks ON tasks.id = runs.task_id
+                WHERE runs.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if not run:
+                raise HTTPException(status_code=404, detail="运行记录不存在。")
+            if not _can_read_run(run, user):
+                database.insert_audit_log(
+                    conn,
+                    actor_id=user["id"],
+                    action="run.events.read.deny",
+                    resource=run_id,
+                    payload={"reason": "run_not_visible"},
+                    decision="deny",
+                )
+                raise HTTPException(status_code=403, detail="无权查看该运行事件。")
             rows = conn.execute(
                 """
                 SELECT seq, type, tool_name, payload_json, created_at

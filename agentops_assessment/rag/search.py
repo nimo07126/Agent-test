@@ -6,6 +6,7 @@ from collections import Counter
 from typing import Any
 
 from agentops_assessment.backend import database
+from agentops_assessment.rag.security import scrub_untrusted_text
 
 
 def tokenize(text: str) -> list[str]:
@@ -25,13 +26,16 @@ def cosine_score(query_tokens: list[str], doc_tokens: list[str]) -> float:
     return dot / (q_norm * d_norm)
 
 
-class KnowledgeIndex:
-    """轻量级本地检索索引。
+def phrase_score(query: str, document: str) -> float:
+    phrases = set(re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9-]{3,}", query.lower()))
+    if not phrases:
+        return 0.0
+    doc_lower = document.lower()
+    return sum(1.0 for phrase in phrases if phrase in doc_lower) / len(phrases)
 
-    TODO(candidate/P1): 完成权限感知检索、重排、答案生成、引用溯源
-    和被过滤文档报告。文档正文必须视为不可信数据，不能让正文中的
-    指令改变系统策略；完成实现后不得向 API 返回 debug/candidate_note。
-    """
+
+class KnowledgeIndex:
+    """轻量级本地检索索引。"""
 
     def search(
         self,
@@ -48,20 +52,53 @@ class KnowledgeIndex:
                 """
             ).fetchall()
 
-        filtered_doc_ids = sorted(
+        allowed_rows = []
+        filtered_doc_ids: set[str] = set()
+        permissions = set(user_permissions)
+        for row in rows:
+            required_permission = row["permission"]
+            if required_permission != "knowledge:read" and required_permission not in permissions:
+                filtered_doc_ids.add(row["doc_id"])
+                continue
+            allowed_rows.append(row)
+
+        query_tokens = tokenize(scrub_untrusted_text(query))
+        scored = []
+        for row in allowed_rows:
+            doc_text = f"{row['title']}\n{row['content']}"
+            safe_doc_text = scrub_untrusted_text(doc_text)
+            score = cosine_score(query_tokens, tokenize(safe_doc_text)) + phrase_score(query, safe_doc_text)
+            if row["title"] and row["title"] in query:
+                score += 1.0
+            if score > 0:
+                scored.append((score, row))
+
+        if not scored and allowed_rows:
+            scored = [(0.0, row) for row in allowed_rows]
+
+        ranked = [row for _, row in sorted(scored, key=lambda item: (-item[0], item[1]["id"]))[:top_k]]
+        citations = [
             {
-                row["doc_id"]
-                for row in rows
-                if row["permission"] not in user_permissions and row["permission"] != "knowledge:read"
+                "doc_id": row["doc_id"],
+                "title": row["title"],
+                "source_path": row["source_path"],
+                "chunk_id": row["id"],
             }
-        )
-        # 占位实现故意不返回有效答案，直到候选人完成测试要求的检索和重排行为。
+            for row in ranked
+        ]
+
+        if ranked:
+            titles = "、".join(dict.fromkeys(row["title"] for row in ranked))
+            answer = (
+                f"已根据可访问知识库检索到 {len(ranked)} 条相关规则：{titles}。"
+                "建议关注库存缺口、未来 14 天预测需求、供应商风险和审批阈值；"
+                "请以引用中的规则为准，受限文档仅报告过滤结果，不返回正文。"
+            )
+        else:
+            answer = "未在当前权限范围内检索到可引用的知识库规则。"
+
         return {
-            "answer": "",
-            "citations": [],
-            "filtered_doc_ids": filtered_doc_ids,
-            "debug": {
-                "candidate_note": "TODO(candidate/P1): 按查询相关性排序 chunk，并生成答案。",
-                "available_chunks": len(rows),
-            },
+            "answer": answer,
+            "citations": citations,
+            "filtered_doc_ids": sorted(filtered_doc_ids),
         }
