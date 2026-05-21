@@ -10,6 +10,7 @@ from agentops_assessment.integrations.exceptions import TransientIntegrationErro
 from agentops_assessment.integrations.oa import OAClient
 from agentops_assessment.integrations.third_party import SupplierRiskClient
 from agentops_assessment.rag.search import KnowledgeIndex
+from agentops_assessment.security import sanitize
 
 ToolCallable = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -67,9 +68,7 @@ class ToolRegistry:
             self.last_call_attempts[name] = attempts
             try:
                 result = self._tools[name](args)
-                # TODO(candidate/P1): 规范化工具输出，并对敏感字段做脱敏；
-                # vendor_secret、unit_cost_usd 等不得进入 result/events/audit。
-                return result
+                return sanitize(result)
             except TransientIntegrationError as exc:
                 last_error = exc
                 continue

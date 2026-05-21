@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agentops_assessment.security import sanitize
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = ROOT_DIR / ".data" / "assessment.sqlite"
 
@@ -154,7 +156,7 @@ def insert_run_event(
             next_event_seq(conn, run_id),
             event_type,
             tool_name,
-            encode_json(payload),
+            encode_json(sanitize(payload)),
             now_iso(),
         ),
     )
@@ -174,7 +176,7 @@ def insert_audit_log(
         INSERT INTO audit_logs (actor_id, action, resource, decision, payload_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (actor_id, action, resource, decision, encode_json(payload), now_iso()),
+        (actor_id, action, resource, decision, encode_json(sanitize(payload)), now_iso()),
     )
     conn.commit()
 
