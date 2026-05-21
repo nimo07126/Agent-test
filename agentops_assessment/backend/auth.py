@@ -39,7 +39,7 @@ def get_current_user(x_user_id: Annotated[str | None, Header()] = None) -> dict:
     return user
 
 
-def require_permissions(*permissions: str):
+def require_permissions(*permissions: str, audit_action: str = "permission.denied", resource: str = "api"):
     def dependency(user: dict = Depends(get_current_user)) -> dict:
         missing = [p for p in permissions if p not in user["permissions"]]
         if missing:
@@ -48,8 +48,8 @@ def require_permissions(*permissions: str):
                 database.insert_audit_log(
                     conn,
                     actor_id=user["id"],
-                    action="permission.denied",
-                    resource="api",
+                    action=audit_action,
+                    resource=resource,
                     decision="deny",
                     payload=sanitize({"missing_permissions": missing}),
                 )

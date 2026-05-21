@@ -59,9 +59,10 @@
 | `py scripts/self_check.py` | Failed before code changes: `py` command not found. | Environment launcher mismatch, not a code failure. |
 | `py -m pytest -q` | Failed before code changes: `py` command not found. | Environment launcher mismatch, not a code failure. |
 | `.venv\Scripts\python.exe scripts\self_check.py` | Passed: 4 passed. | Public contract self-check. |
-| `.venv\Scripts\python.exe -m pytest -q` | Passed: 15 passed. | Acceptance guidance xfail was removed; all local tests now pass. |
+| `.venv\Scripts\python.exe -m pytest -q` | Passed: 19 passed. | Acceptance guidance xfail was removed; all local tests now pass, including added hidden-risk regressions. |
 
 ## Remaining Risks
 
 - Planner uses deterministic keyword intent parsing rather than a real LLM; this is intentional for the fixed no-external-key assessment but may need richer language coverage in production.
+- RAG answer generation intentionally returns conservative rule summaries instead of source excerpts to reduce hidden-document leakage risk.
 - Unknown SKU requests fail explainably through integration lookup errors; hidden tests should seed matching SKU data if they expect successful business results.

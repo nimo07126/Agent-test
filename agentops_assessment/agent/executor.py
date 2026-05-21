@@ -169,11 +169,11 @@ class Executor:
 
     def _approval_decision(self, scratch: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         intent = args.get("intent") or scratch.get("intent")
-        if intent == "analysis_only":
+        if intent != "create_approval_draft":
             return {
                 "should_create": False,
                 "decision": "skip",
-                "reason": "analysis_only_intent",
+                "reason": f"{intent}_intent",
             }
         permissions = set(scratch.get("user_permissions", []))
         if "oa:approval:write" not in permissions:

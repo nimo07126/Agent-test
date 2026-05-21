@@ -32,23 +32,45 @@ def infer_intent(text: str) -> str:
         "不要创建",
         "不生成oa",
         "不生成 oa",
+        "不生成审批草稿",
+        "不创建审批草稿",
+        "不创建 oa",
+        "不创建oa",
+        "不要实际创建",
         "analysis only",
     ]
     if any(marker in lowered for marker in analysis_only_markers):
         return "analysis_only"
+    recommendation_markers = [
+        "建议文本",
+        "建议文案",
+        "建议内容",
+        "审批建议文本",
+        "生成建议",
+        "返回建议",
+        "recommendation",
+        "分析结论",
+    ]
+    if any(marker in lowered for marker in recommendation_markers):
+        return "recommendation_text"
     create_markers = [
-        "创建",
-        "生成补货审批",
+        "生成补货审批建议",
         "创建审批草稿",
+        "创建 oa 审批草稿",
+        "创建oa审批草稿",
+        "生成审批草稿",
+        "生成 oa 草稿",
+        "生成oa草稿",
+        "创建草稿",
+        "提交审批",
+        "发起审批",
         "oa 审批",
         "oa审批",
         "approval draft",
+        "create approval",
     ]
     if any(marker in lowered for marker in create_markers):
         return "create_approval_draft"
-    recommendation_markers = ["建议", "recommendation", "分析结论"]
-    if any(marker in lowered for marker in recommendation_markers):
-        return "recommendation_text"
     return "analysis_only"
 
 

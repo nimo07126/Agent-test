@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
     @app.post("/api/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
     def create_task(
         body: TaskCreate,
-        user: dict = Depends(require_permissions("tasks:create")),
+        user: dict = Depends(require_permissions("tasks:create", audit_action="task.create", resource="new_task")),
     ) -> TaskOut:
         injection_matches = detect_prompt_injection(f"{body.title}\n{body.prompt}")
         if injection_matches:
@@ -124,6 +124,30 @@ def create_app() -> FastAPI:
                     payload={"reason": "task_visibility_denied"},
                 )
                 raise HTTPException(status_code=403, detail="无权运行该任务。")
+            existing_run = conn.execute(
+                """
+                SELECT id, status
+                FROM runs
+                WHERE task_id = ? AND status IN ('queued', 'running', 'completed')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
+            if existing_run:
+                database.insert_audit_log(
+                    conn,
+                    actor_id=user["id"],
+                    action="run.create",
+                    resource=existing_run["id"],
+                    decision="allow",
+                    payload=sanitize({"task_id": task_id, "duplicate": True}),
+                )
+                return RunCreateOut(
+                    run_id=existing_run["id"],
+                    task_id=task_id,
+                    status=existing_run["status"],
+                )
             conn.execute(
                 """
                 INSERT INTO runs (id, task_id, requested_by, status, created_at)

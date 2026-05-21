@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import datetime
 
 from agentops_assessment.backend import database
+from agentops_assessment.security import sanitize
 
 
 def build_dashboard(conn: sqlite3.Connection) -> dict:
@@ -65,7 +66,7 @@ def build_dashboard(conn: sqlite3.Connection) -> dict:
             {
                 "run_id": row["id"],
                 "task_id": row["task_id"],
-                "error": row["error"],
+                "error": sanitize(row["error"]),
                 "finished_at": row["finished_at"],
             }
             for row in recent_failure_rows
