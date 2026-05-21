@@ -67,12 +67,18 @@ class ToolRegistry:
             self.last_call_attempts[name] = attempts
             try:
                 result = self._tools[name](args)
-                # TODO(candidate/P1): 规范化工具输出，并对敏感字段做脱敏；
-                # vendor_secret、unit_cost_usd 等不得进入 result/events/audit。
-                return result
+                sanitized = self._sanitize_result(result)
+                return sanitized
             except TransientIntegrationError as exc:
                 last_error = exc
                 continue
         if last_error:
             raise last_error
         raise RuntimeError(f"工具失败但没有抛出明确异常: {name}")
+
+    def _sanitize_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        """规范化工具输出，并对敏感字段做脱敏。"""
+        sensitive_fields = {"vendor_secret", "unit_cost_usd"}
+        if not isinstance(result, dict):
+            return result
+        return {k: v for k, v in result.items() if k not in sensitive_fields}
